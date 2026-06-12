@@ -1003,6 +1003,9 @@ export default function App() {
             </button>
           </div>
         </div>
+        <div className="absolute bottom-6 text-xs text-gray-400 font-semibold tracking-wider z-10">
+          제작자: 삼례동초 호근쌤 | Version 1.4.0
+        </div>
       </div>
     );
   }
