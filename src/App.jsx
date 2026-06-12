@@ -1,27 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  User, 
-  GraduationCap, 
-  Plus, 
-  Trash2, 
   CheckCircle, 
-  AlertCircle, 
-  FileText, 
-  Check,
-  ChevronRight,
-  Save,
+  XCircle, 
+  Settings, 
+  User, 
+  Users, 
+  ChevronRight, 
+  BookOpen, 
+  FileText,
+  AlertCircle,
   Play,
   ArrowLeft,
   Lock,
+  Unlock,
   Key,
   Download,
-  RotateCcw
+  RotateCcw,
+  Eye,
+  EyeOff,
+  Layout,
+  ClipboardCheck,
+  Home,
+  Plus,
+  Trash2,
+  Share2,
+  Copy,
+  DownloadCloud
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, getDoc, deleteDoc } from 'firebase/firestore';
 
-// Firebase 초기화 (외부)
+// ==========================================
+// Firebase 초기화 (캔버스 전용 설정)
+// ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyClSLaDS_yzVSdxsx17lIFzPNwQgF2R-8Y",
   authDomain: "school-grader-loot72.firebaseapp.com",
@@ -35,1042 +47,1091 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = "school-grader-loot72"
 
-// --- 샘플 데이터 ---
-const sampleExam = {
-  id: 'exam-1',
-  title: "1학기 중간고사 (샘플 시험지)",
-  questions: [
-    { id: 'q1', type: 'multiple_choice', text: "다음 중 대한민국의 수도는 어디인가요?", options: ["부산", "서울", "대구", "인천"], answer: "1", points: 10 },
-    { id: 'q2', type: 'short_answer', text: "H2O는 어떤 물질의 화학식인가요?", answer: "물", points: 10 },
-    { id: 'q3', type: 'essay', text: "인공지능 기술이 미래 사회에 미칠 긍정적인 영향에 대해 서술하시오.", answer: "", points: 20 }
-  ]
-};
-
-export default function App() {
-  // 앱 모드: 'select_role', 'teacher', 'student'
-  const [appMode, setAppMode] = useState('select_role');
-  const [user, setUser] = useState(null);
-  
-  // 데이터 상태 (Firebase 연동)
-  const [exam, setExam] = useState(sampleExam);
-  const [submissions, setSubmissions] = useState([]);
-
-  // Firebase 인증 초기화
-  useEffect(() => {
-const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (error) {
-        console.error("Auth init error:", error);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
-
-  // 실시간 데이터 동기화
-  useEffect(() => {
-    if (!user) return;
-
-    // 1. 시험지 실시간 리스너
-    const examDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'exams', 'current_exam');
-    const unsubExam = onSnapshot(examDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setExam(docSnap.data());
-      }
-    }, (err) => console.error("Exam sync error:", err));
-
-    // 2. 제출물 실시간 리스너
-    const subsRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
-    const unsubSubs = onSnapshot(subsRef, (snapshot) => {
-      const subs = [];
-      snapshot.forEach(d => subs.push({ id: d.id, ...d.data() }));
-      subs.sort((a, b) => b.timestamp - a.timestamp); // 최신순 정렬 (자바스크립트 내 정렬)
-      setSubmissions(subs);
-    }, (err) => console.error("Submissions sync error:", err));
-
-    return () => {
-      unsubExam();
-      unsubSubs();
-    };
-  }, [user]);
-
-  // --- 화면 전환 ---
-  if (appMode === 'select_role') {
-    return <RoleSelector setAppMode={setAppMode} />;
-  }
-
-  if (appMode === 'teacher') {
-    return <TeacherDashboard 
-              exam={exam} 
-              setExam={setExam} 
-              submissions={submissions}
-              setSubmissions={setSubmissions}
-              goBack={() => setAppMode('select_role')} 
-           />;
-  }
-
-  if (appMode === 'student') {
-    return <StudentDashboard 
-              exam={exam} 
-              submitExam={async (submission) => {
-                try {
-                  const subsRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
-                  await addDoc(subsRef, submission);
-                } catch(err) {
-                  console.error("Submit error:", err);
-                }
-              }}
-              goBack={() => setAppMode('select_role')} 
-           />;
-  }
-
-  return null;
-}
-
 // ==========================================
-// 1. 역할 선택 화면
+// 공통 UI: 커스텀 다이얼로그 (alert, confirm 대체)
 // ==========================================
-function RoleSelector({ setAppMode }) {
-  const [modalState, setModalState] = useState('none'); // 'none', 'set', 'enter'
-  const [password, setPassword] = useState('');
-  const [savedPassword, setSavedPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-
-  // 교사 모드 클릭 시 비밀번호 설정 여부 확인
-  const handleTeacherClick = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      const authDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'auth');
-      const docSnap = await getDoc(authDocRef);
-      if (docSnap.exists() && docSnap.data().teacherPassword) {
-        setSavedPassword(docSnap.data().teacherPassword);
-        setModalState('enter');
-      } else {
-        setModalState('set');
-      }
-    } catch (err) {
-      console.error("Auth check error:", err);
-      setError('접근 권한을 확인하는 데 실패했습니다.');
-    }
-    setIsLoading(false);
-  };
-
-  // 비밀번호 제출 핸들러
-  const handlePasswordSubmit = async () => {
-    if (!password.trim()) {
-      setError('비밀번호를 입력해주세요.');
-      return;
-    }
-    setIsLoading(true);
-    setError('');
-    
-    if (modalState === 'set') {
-      try {
-        const authDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'auth');
-        await setDoc(authDocRef, { teacherPassword: password });
-        setAppMode('teacher');
-      } catch (err) {
-        console.error("Save password error:", err);
-        setError('비밀번호 저장 중 오류가 발생했습니다.');
-      }
-    } else if (modalState === 'enter') {
-      if (password === savedPassword) {
-        setAppMode('teacher');
-      } else {
-        setError('비밀번호가 일치하지 않습니다.');
-      }
-    }
-    setIsLoading(false);
-  };
-
+function CustomDialog({ dialog, setDialog }) {
+  if (!dialog.isOpen) return null;
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6 relative">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-        <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6">
-          <FileText size={32} />
-        </div>
-        <h1 className="text-2xl font-bold text-gray-800 mb-2">스마트 자동 채점 도구</h1>
-        <p className="text-gray-500 mb-8">역할을 선택해주세요.</p>
-        
-        <div className="space-y-4">
+    <div className="fixed inset-0 bg-indigo-900/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
+      <div className="bg-white rounded-[32px] shadow-2xl p-8 max-w-sm w-full text-center animate-in zoom-in-95 duration-200">
+        <h3 className={`text-2xl font-black mb-4 ${dialog.title === '경고' || dialog.title === '오류' ? 'text-red-500' : 'text-gray-800'}`}>
+          {dialog.title}
+        </h3>
+        <p className="text-gray-600 mb-8 font-medium leading-relaxed whitespace-pre-wrap">{dialog.message}</p>
+        <div className="flex gap-3 justify-center">
+          {dialog.type === 'confirm' && (
+            <button 
+              onClick={dialog.onCancel} 
+              className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl hover:bg-gray-200 font-bold transition-colors"
+            >
+              취소
+            </button>
+          )}
           <button 
-            onClick={handleTeacherClick}
-            disabled={isLoading}
-            className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-indigo-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={dialog.onConfirm} 
+            className={`flex-1 py-4 text-white font-bold rounded-2xl transition-colors shadow-lg ${dialog.title === '경고' || dialog.title === '오류' ? 'bg-red-500 hover:bg-red-600 shadow-red-200' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`}
           >
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                <User size={24} />
-              </div>
-              <div className="text-left">
-                <h3 className="font-bold text-gray-800 flex items-center">
-                  교사 모드 <Lock size={14} className="ml-2 text-indigo-400" />
-                </h3>
-                <p className="text-sm text-gray-500">시험지 출제 및 결과 확인</p>
-              </div>
-            </div>
-            <ChevronRight className="text-gray-400 group-hover:text-indigo-500" />
-          </button>
-
-          <button 
-            onClick={() => setAppMode('student')}
-            className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-emerald-100 hover:border-emerald-500 hover:bg-emerald-50 transition-all group"
-          >
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-emerald-100 text-emerald-600 rounded-lg group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                <GraduationCap size={24} />
-              </div>
-              <div className="text-left">
-                <h3 className="font-bold text-gray-800">학생 모드</h3>
-                <p className="text-sm text-gray-500">답안 작성 및 제출</p>
-              </div>
-            </div>
-            <ChevronRight className="text-gray-400 group-hover:text-emerald-500" />
+            확인
           </button>
         </div>
       </div>
-
-      {/* 하단 제작자 문구 */}
-      <div className="absolute bottom-6 text-gray-400 text-sm font-medium">
-        삼례동초 호근쌤 v1.0
-      </div>
-
-      {/* 비밀번호 모달창 */}
-      {modalState !== 'none' && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-center mb-4">
-              <div className="p-4 bg-indigo-50 text-indigo-600 rounded-full">
-                <Key size={32} />
-              </div>
-            </div>
-            
-            <h2 className="text-xl font-bold text-center text-gray-800 mb-2">
-              {modalState === 'set' ? '교사 비밀번호 설정' : '교사 인증'}
-            </h2>
-            <p className="text-center text-gray-500 text-sm mb-6">
-              {modalState === 'set' 
-                ? '최초 1회 교사용 접속 비밀번호를 설정합니다.' 
-                : '교사 모드에 접근하기 위해 비밀번호를 입력해주세요.'}
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
-                  placeholder="비밀번호 입력"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all text-center tracking-widest text-lg"
-                  autoFocus
-                />
-                {error && <p className="text-red-500 text-sm mt-2 text-center font-medium">{error}</p>}
-              </div>
-
-              <div className="flex space-x-3 pt-2">
-                <button
-                  onClick={() => { setModalState('none'); setPassword(''); setError(''); }}
-                  className="flex-1 py-3 px-4 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transition-colors"
-                >
-                  취소
-                </button>
-                <button
-                  onClick={handlePasswordSubmit}
-                  disabled={isLoading}
-                  className="flex-1 py-3 px-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors"
-                >
-                  {isLoading ? '확인 중...' : '확인'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 // ==========================================
-// 2. 교사 대시보드
+// 1. 학생 화면 (선택된 방의 데이터 사용)
 // ==========================================
-function TeacherDashboard({ exam, setExam, submissions, setSubmissions, goBack }) {
-  const [activeTab, setActiveTab] = useState('create'); // 'create', 'results'
+function StudentScreen({ exam, user, selectedRoom, goBack }) {
+  const [studentName, setStudentName] = useState('');
+  const [answers, setAnswers] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  const [score, setScore] = useState(0);
+  const [feedback, setFeedback] = useState([]);
+  const [dialog, setDialog] = useState({ isOpen: false });
 
-  // 프로그램 초기화 함수
-  const handleReset = async () => {
-    if (window.confirm("⚠️ 경고: 모든 학생의 제출 답안과 현재 시험지 데이터가 완전히 삭제됩니다.\n새로운 시험을 준비할 때만 사용하세요.\n\n정말 초기화하시겠습니까?")) {
-      try {
-        // 1. 모든 학생 제출물 삭제
-        for (const sub of submissions) {
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'submissions', sub.id));
+  const showDialog = (title, message, type = 'alert', onConfirm = null, onCancel = null) => {
+    setDialog({
+      isOpen: true, title, message, type,
+      onConfirm: onConfirm || (() => setDialog({ isOpen: false })),
+      onCancel: onCancel || (() => setDialog({ isOpen: false }))
+    });
+  };
+
+  if (!exam || !exam.questions || exam.questions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-4">
+        <AlertCircle size={48} className="text-gray-400 mb-4" />
+        <h2 className="text-xl font-bold text-gray-700">현재 대기 중인 시험이 없습니다.</h2>
+        <p className="text-gray-500 mt-2 text-center">선생님께서 시험을 시작하실 때까지 기다려주세요.</p>
+        <button onClick={goBack} className="mt-6 px-6 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700">방 목록으로 돌아가기</button>
+      </div>
+    );
+  }
+
+  const isTestMode = exam.mode === 'test';
+
+  const handleAnswerChange = (questionId, value) => {
+    setAnswers({ ...answers, [questionId]: value });
+  };
+
+  const executeSubmit = async () => {
+    let calculatedScore = 0;
+    let newFeedback = [];
+
+    exam.questions.forEach((q, index) => {
+      let isCorrect = false;
+      let displayStudentAnswer = "미입력";
+      let displayCorrectAnswer = "미설정";
+
+      if (q.type === 'multiple') {
+        const studentAnsIdx = answers[q.id];
+        const correctAnsIdx = q.correctAnswer;
+        
+        if (studentAnsIdx !== undefined && studentAnsIdx === correctAnsIdx) {
+          isCorrect = true;
+          calculatedScore += q.score;
         }
         
-        // 2. 시험지 데이터 초기화
-        const examDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'exams', 'current_exam');
-        await setDoc(examDocRef, { title: '', questions: [] });
+        displayStudentAnswer = studentAnsIdx !== undefined ? `${Number(studentAnsIdx) + 1}번` : "미입력";
+        displayCorrectAnswer = correctAnsIdx ? `${Number(correctAnsIdx) + 1}번` : "미설정";
+      } else {
+        const originalStudentAnswer = String(answers[q.id] || "");
+        const studentAnswerClean = originalStudentAnswer.replace(/\s+/g, '').toLowerCase();
         
-        alert("프로그램이 성공적으로 초기화되었습니다.");
-        setActiveTab('create'); // 초기화 후 시험지 관리 탭으로 이동
-      } catch (error) {
-        console.error("Reset error:", error);
-        alert("초기화 중 오류가 발생했습니다.");
+        const correctAnswersList = String(q.correctAnswer || "")
+          .split(',')
+          .map(ans => ans.replace(/\s+/g, '').toLowerCase())
+          .filter(ans => ans !== "");
+
+        isCorrect = correctAnswersList.includes(studentAnswerClean) && studentAnswerClean !== "";
+        if (isCorrect) calculatedScore += q.score;
+        
+        displayStudentAnswer = originalStudentAnswer || "미입력";
+        displayCorrectAnswer = q.correctAnswer || "미설정";
       }
+      
+      newFeedback.push({
+        questionNumber: index + 1,
+        question: isTestMode && q.text ? q.text : `문제 ${index + 1}`,
+        studentAnswer: displayStudentAnswer,
+        correctAnswer: displayCorrectAnswer,
+        isCorrect: isCorrect,
+        score: isCorrect ? q.score : 0,
+        maxScore: q.score
+      });
+    });
+
+    try {
+      if (user) {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', `submissions_${selectedRoom}`), {
+          studentName,
+          score: calculatedScore,
+          feedback: newFeedback,
+          submittedAt: new Date().toISOString()
+        });
+        
+        setScore(calculatedScore);
+        setFeedback(newFeedback);
+        setSubmitted(true);
+      }
+    } catch (error) {
+      console.error("Submission error:", error);
+      showDialog('오류', '제출 중 오류가 발생했습니다.');
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* 헤더 */}
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center space-x-4">
-          <button onClick={goBack} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 transition-colors">
-            <ArrowLeft size={20} />
-          </button>
-          <h1 className="text-xl font-bold text-gray-800 flex items-center">
-            <User className="mr-2 text-indigo-600" size={24} />
-            교사 워크스페이스
-          </h1>
-        </div>
-        <div className="flex items-center space-x-4">
-          <div className="flex bg-gray-100 p-1 rounded-lg">
-            <button 
-              onClick={() => setActiveTab('create')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              시험지 관리
-            </button>
-            <button 
-              onClick={() => setActiveTab('results')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center ${activeTab === 'results' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              결과 확인
-              {submissions.length > 0 && (
-                <span className="ml-2 bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full text-xs">
-                  {submissions.length}
-                </span>
-              )}
-            </button>
-          </div>
-          
-          {/* 초기화 버튼 추가 */}
-          <button 
-            onClick={handleReset}
-            className="flex items-center text-xs font-medium bg-red-50 text-red-600 px-3 py-2 rounded-lg hover:bg-red-100 transition-colors border border-red-100"
-            title="데이터 전체 초기화"
-          >
-            <RotateCcw size={14} className="mr-1.5" /> 프로그램 초기화
-          </button>
-        </div>
-      </header>
+  const handleSubmit = () => {
+    if (!studentName.trim()) {
+      showDialog('알림', '이름을 정확히 입력해주세요.');
+      return;
+    }
+    if (Object.keys(answers).length < exam.questions.length) {
+      showDialog('확인', '아직 풀지 않은 문제가 있습니다.\n정말 제출하시겠습니까?', 'confirm', 
+        () => { setDialog({isOpen: false}); executeSubmit(); }
+      );
+      return;
+    }
+    executeSubmit();
+  };
 
-      {/* 메인 컨텐츠 */}
-      <main className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          {activeTab === 'create' ? (
-            <ExamEditor exam={exam} setExam={setExam} />
-          ) : (
-            <ResultsViewer exam={exam} submissions={submissions} setSubmissions={setSubmissions} />
-          )}
+  if (submitted) {
+    return (
+      <div className="max-w-2xl mx-auto p-6 bg-white shadow-lg rounded-xl mt-8 animate-in zoom-in-95 duration-300">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+            <CheckCircle size={32} className="text-green-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800">{studentName} 학생, 제출 완료!</h2>
+          <p className="text-4xl font-extrabold text-indigo-600 mt-4">{score} <span className="text-xl text-gray-500 font-medium">/ 100 점</span></p>
         </div>
-      </main>
+
+        <div className="space-y-4">
+          <h3 className="font-bold text-lg border-b pb-2">채점 결과 상세</h3>
+          {feedback.map((item, index) => (
+            <div key={index} className={`p-4 rounded-lg border ${item.isCorrect ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+              <div className="flex justify-between items-start mb-2">
+                <span className="font-bold">문제 {item.questionNumber}.</span>
+                <span className={`font-bold flex items-center ${item.isCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                  {item.isCorrect ? <CheckCircle size={16} className="mr-1" /> : <XCircle size={16} className="mr-1" />}
+                  {item.isCorrect ? `+${item.score}점` : '0점'}
+                </span>
+              </div>
+              {isTestMode && item.question !== `문제 ${item.questionNumber}` && (
+                <p className="text-gray-700 mb-3 text-sm">{item.question}</p>
+              )}
+              <div className="text-sm mt-2">
+                <p className="mb-1"><span className="text-gray-500 w-16 inline-block">나의 답:</span> <span className="font-medium">{item.studentAnswer}</span></p>
+                {!item.isCorrect && (
+                  <p><span className="text-gray-500 w-16 inline-block">정답:</span> <span className="font-bold text-indigo-600">{item.correctAnswer}</span></p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={goBack} className="mt-8 w-full py-4 bg-indigo-50 text-indigo-700 font-bold rounded-xl hover:bg-indigo-100 transition-colors">
+          방 목록으로 돌아가기
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto p-4 sm:p-6 lg:p-8">
+      <div className="flex flex-col sm:flex-row items-center justify-between mb-8 gap-4">
+        <button onClick={goBack} className="flex items-center text-gray-500 hover:text-indigo-600 self-start bg-white px-4 py-2 rounded-lg shadow-sm">
+          <ArrowLeft size={18} className="mr-2" /> 나가기
+        </button>
+        <div className="text-center">
+          <h1 className="text-2xl font-extrabold text-gray-800 flex items-center justify-center">
+            {isTestMode ? <ClipboardCheck className="mr-2 text-emerald-500" /> : <BookOpen className="mr-2 text-indigo-600" />}
+            {exam.title || "온라인 평가"}
+          </h1>
+          <div className="mt-2">
+            <span className={`text-xs px-3 py-1 rounded-full font-bold shadow-sm ${isTestMode ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>
+              {isTestMode ? "문제 풀이 모드" : "답안 전송 모드"}
+            </span>
+          </div>
+        </div>
+        <div className="hidden sm:block w-24"></div>
+      </div>
+
+      <div className="bg-white p-6 rounded-2xl shadow-sm mb-6 border border-gray-100 border-t-4 border-t-indigo-500">
+        <label className="block text-sm font-bold text-gray-700 mb-2">학생 이름</label>
+        <input
+          type="text"
+          value={studentName}
+          onChange={(e) => setStudentName(e.target.value)}
+          placeholder="이름을 입력하세요"
+          className="w-full sm:w-1/2 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+        />
+      </div>
+
+      <div className="space-y-6">
+        {exam.questions.map((q, index) => (
+          <div key={q.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="font-bold text-lg text-gray-800">
+                <span className="text-indigo-600 mr-2">{index + 1}번.</span> 
+                {isTestMode && q.text ? q.text : "답안을 입력하세요"}
+              </h3>
+              <span className="bg-indigo-50 text-indigo-600 text-xs px-2 py-1 rounded font-bold whitespace-nowrap ml-4">
+                {q.score}점
+              </span>
+            </div>
+            
+            {q.type === 'multiple' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mt-4">
+                {q.options.map((opt, i) => (
+                  <label key={i} className={`flex items-center p-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${answers[q.id] === String(i) ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'border-gray-100 hover:border-gray-300'}`}>
+                    <input
+                      type="radio"
+                      name={`question_${q.id}`}
+                      value={String(i)}
+                      checked={answers[q.id] === String(i)}
+                      onChange={() => handleAnswerChange(q.id, String(i))}
+                      className="mr-3 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                    />
+                    <span className={answers[q.id] === String(i) ? 'font-bold text-indigo-900' : 'font-medium text-gray-700'}>
+                      {isTestMode && opt ? `${i + 1}. ${opt}` : `${i + 1}번`}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={answers[q.id] || ''}
+                onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                placeholder="정답 입력"
+                className="w-full mt-2 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none font-medium"
+              />
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-8 flex justify-end">
+        <button
+          onClick={handleSubmit}
+          className="flex items-center px-8 py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-xl shadow-indigo-200 hover:bg-indigo-700 transition-all transform hover:-translate-y-1"
+        >
+          <CheckCircle className="mr-2" />
+          답안 최종 제출하기
+        </button>
+      </div>
+      <CustomDialog dialog={dialog} setDialog={setDialog} />
     </div>
   );
 }
 
-// --- 교사: 시험지 편집기 ---
-function ExamEditor({ exam, setExam }) {
-  const [editingExam, setEditingExam] = useState(exam || { title: '', questions: [] });
-  const [isSaved, setIsSaved] = useState(false);
+// ==========================================
+// 2. 교사 대시보드 (선택된 방의 데이터 사용)
+// ==========================================
+function TeacherDashboard({ exam, submissions, selectedRoom, goBack }) {
+  const [activeTab, setActiveTab] = useState('create'); 
+  const [examTitle, setExamTitle] = useState(exam?.title || '');
+  const [questions, setQuestions] = useState(exam?.questions || []);
+  const [examMode, setExamMode] = useState(exam?.mode || 'grading');
+  const [dialog, setDialog] = useState({ isOpen: false });
+
+  // 코드 기반 공유 전용 상태 관리
+  const [shareCodeModal, setShareCodeModal] = useState(false);
+  const [loadCodeModal, setLoadCodeModal] = useState(false);
+  const [inputCode, setInputCode] = useState('');
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [modalError, setModalError] = useState('');
+
+  const showDialog = (title, message, type = 'alert', onConfirm = null, onCancel = null) => {
+    setDialog({ isOpen: true, title, message, type, onConfirm: onConfirm || (() => setDialog({ isOpen: false })), onCancel: onCancel || (() => setDialog({ isOpen: false })) });
+  };
 
   const addQuestion = (type) => {
-    const newQuestion = {
-      id: `q${Date.now()}`,
-      type,
-      text: '',
-      points: 10,
-      answer: '',
-      ...(type === 'multiple_choice' ? { options: ['', '', '', ''] } : {})
-    };
-    setEditingExam({ ...editingExam, questions: [...editingExam.questions, newQuestion] });
-    setIsSaved(false);
+    const newQuestion = { id: Date.now().toString(), type, text: '', score: 5, correctAnswer: '', ...(type === 'multiple' ? { options: ['', '', '', ''] } : {}) };
+    setQuestions([...questions, newQuestion]);
   };
 
   const updateQuestion = (id, field, value) => {
-    const updated = editingExam.questions.map(q => 
-      q.id === id ? { ...q, [field]: value } : q
-    );
-    setEditingExam({ ...editingExam, questions: updated });
-    setIsSaved(false);
+    setQuestions(questions.map(q => q.id === id ? { ...q, [field]: value } : q));
   };
 
   const updateOption = (qId, optIndex, value) => {
-    const updated = editingExam.questions.map(q => {
+    setQuestions(questions.map(q => {
       if (q.id === qId) {
         const newOptions = [...q.options];
         newOptions[optIndex] = value;
         return { ...q, options: newOptions };
       }
       return q;
-    });
-    setEditingExam({ ...editingExam, questions: updated });
-    setIsSaved(false);
+    }));
   };
 
   const changeOptionCount = (qId, count) => {
-    const updated = editingExam.questions.map(q => {
+    setQuestions(questions.map(q => {
       if (q.id === qId) {
         let newOptions = [...q.options];
         if (count > newOptions.length) {
-          // 옵션 추가 (5지 선다로 변경 시)
           while (newOptions.length < count) newOptions.push('');
         } else if (count < newOptions.length) {
-          // 옵션 삭제 (4지 선다로 변경 시)
           newOptions = newOptions.slice(0, count);
         }
         
-        // 만약 삭제된 옵션이 기존 정답이었다면 정답 위치를 마지막 번호로 조정
-        let newAnswer = q.answer;
-        if (newAnswer !== "" && Number(newAnswer) >= count) {
-          newAnswer = String(count - 1);
+        let newCorrect = q.correctAnswer;
+        if (newCorrect && Number(newCorrect) >= count) {
+          newCorrect = '';
         }
-        
-        return { ...q, options: newOptions, answer: newAnswer };
+        return { ...q, options: newOptions, correctAnswer: newCorrect };
       }
       return q;
-    });
-    setEditingExam({ ...editingExam, questions: updated });
-    setIsSaved(false);
+    }));
   };
 
-  const removeQuestion = (id) => {
-    setEditingExam({
-      ...editingExam,
-      questions: editingExam.questions.filter(q => q.id !== id)
-    });
-    setIsSaved(false);
-  };
+  const removeQuestion = (id) => { setQuestions(questions.filter(q => q.id !== id)); };
 
-  const handleSave = async () => {
+  const handlePublish = async () => {
+    if (!examTitle.trim()) { showDialog('alert', '시험지 제목을 입력해주세요.'); return; }
+    if (questions.length === 0) { showDialog('alert', '문제를 추가해주세요.'); return; }
+
     try {
-      const examDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'exams', 'current_exam');
-      await setDoc(examDocRef, editingExam);
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', selectedRoom);
+      await setDoc(roomRef, {
+        title: examTitle,
+        questions: questions,
+        mode: examMode,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      showDialog('성공', `성공적으로 배포되었습니다!\n(${examMode === 'test' ? '문제 풀이 모드' : '답안 전송 모드'})`);
     } catch (error) {
-      console.error("Save error:", error);
+      console.error("Publish error:", error);
+      showDialog('오류', '저장 중 오류가 발생했습니다.');
     }
   };
 
-  return (
-    <div className="space-y-6 pb-20">
-      <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
-        <label className="block text-sm font-semibold text-gray-700 mb-2">시험지 제목</label>
-        <input 
-          type="text" 
-          value={editingExam.title}
-          onChange={(e) => { setEditingExam({...editingExam, title: e.target.value}); setIsSaved(false); }}
-          className="w-full text-xl p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-          placeholder="예: 1학기 기말고사"
-        />
-      </div>
+  // 고유 랜덤 6자리 코드 생성기
+  const generateShareCode = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 6; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
 
-      <div className="space-y-4">
-        {editingExam.questions.map((q, index) => (
-          <div key={q.id} className="bg-white rounded-xl shadow-sm p-4 border border-gray-200 relative group">
-            <button 
-              onClick={() => removeQuestion(q.id)}
-              className="absolute top-3 right-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <Trash2 size={18} />
-            </button>
-            
-            <div className="flex items-center space-x-3 mb-3">
-              <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">
-                문제 {index + 1}
-              </span>
-              <span className="text-xs font-medium text-gray-500">
-                {q.type === 'multiple_choice' && '객관식'}
-                {q.type === 'short_answer' && '단답형'}
-                {q.type === 'essay' && '서술형'}
-              </span>
-            </div>
+  // 1. 코드 기반 클라우드에 시험지 저장
+  const handleSaveToCloud = async () => {
+    if (!examTitle.trim()) { showDialog('알림', '시험지 제목을 먼저 입력해 주세요.'); return; }
+    if (questions.length === 0) { showDialog('알림', '최소 1개 이상의 문항이 존재해야 합니다.'); return; }
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-              <div className="md:col-span-3">
-                <label className="block text-[11px] text-gray-500 mb-1">문제 내용 (교사용 메모 - 학생에겐 보이지 않음)</label>
-                <textarea 
-                  value={q.text}
-                  onChange={(e) => updateQuestion(q.id, 'text', e.target.value)}
-                  className="w-full p-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none h-16"
-                  placeholder="문제를 입력하세요"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] text-gray-500 mb-1">배점</label>
-                <input 
-                  type="number" 
-                  value={q.points}
-                  onChange={(e) => updateQuestion(q.id, 'points', Number(e.target.value))}
-                  className="w-full p-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-            </div>
-
-            {/* 객관식 옵션 */}
-            {q.type === 'multiple_choice' && (
-              <div className="mb-3 bg-gray-50 p-3 rounded-lg">
-                <div className="flex justify-between items-center mb-2">
-                  <label className="block text-[11px] text-gray-500 font-semibold">정답 선택 및 보기 개수 (학생 OMR 생성용)</label>
-                  <div className="flex space-x-1">
-                    <button 
-                      onClick={() => changeOptionCount(q.id, 4)}
-                      className={`px-3 py-1 text-xs rounded border transition-colors ${q.options.length === 4 ? 'bg-indigo-500 border-indigo-600 text-white font-bold' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      4지 선다
-                    </button>
-                    <button 
-                      onClick={() => changeOptionCount(q.id, 5)}
-                      className={`px-3 py-1 text-xs rounded border transition-colors ${q.options.length === 5 ? 'bg-indigo-500 border-indigo-600 text-white font-bold' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      5지 선다
-                    </button>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  {q.options.map((opt, optIdx) => (
-                    <div key={optIdx} className="flex items-center space-x-2 flex-1 min-w-[120px] bg-white p-2 rounded-lg border border-gray-200 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all">
-                      <input 
-                        type="radio" 
-                        name={`answer-${q.id}`} 
-                        checked={q.answer === String(optIdx)}
-                        onChange={() => updateQuestion(q.id, 'answer', String(optIdx))}
-                        className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 flex-shrink-0 cursor-pointer"
-                      />
-                      <span 
-                        className="font-bold text-gray-600 text-sm whitespace-nowrap flex-shrink-0 cursor-pointer" 
-                        onClick={() => updateQuestion(q.id, 'answer', String(optIdx))}
-                      >
-                        {optIdx + 1}번
-                      </span>
-                      <input 
-                        type="text" 
-                        value={opt}
-                        onChange={(e) => updateOption(q.id, optIdx, e.target.value)}
-                        className="w-full p-1 text-sm border-none bg-transparent outline-none"
-                        placeholder="메모"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 단답형 정답 */}
-            {q.type === 'short_answer' && (
-              <div className="mb-1">
-                <label className="block text-[11px] text-gray-500 mb-1">정답 (자동 채점용)</label>
-                <input 
-                  type="text" 
-                  value={q.answer}
-                  onChange={(e) => updateQuestion(q.id, 'answer', e.target.value)}
-                  className="w-full p-2.5 text-sm border border-emerald-300 bg-emerald-50 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  placeholder="정확한 정답을 입력하세요"
-                />
-              </div>
-            )}
-            
-            {/* 서술형 안내 */}
-            {q.type === 'essay' && (
-              <div className="p-2.5 bg-amber-50 text-amber-700 text-xs rounded-lg flex items-start">
-                <AlertCircle size={14} className="mr-1.5 mt-0.5 flex-shrink-0" />
-                <p>서술형은 제출 후 교사가 직접 읽고 수동으로 채점해야 합니다.</p>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* 문제 추가 버튼들 */}
-      <div className="flex flex-wrap gap-3">
-        <button 
-          onClick={() => addQuestion('multiple_choice')}
-          className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 text-sm font-medium text-gray-700"
-        >
-          <Plus size={16} className="mr-2 text-indigo-500" /> 객관식 추가
-        </button>
-        <button 
-          onClick={() => addQuestion('short_answer')}
-          className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 text-sm font-medium text-gray-700"
-        >
-          <Plus size={16} className="mr-2 text-emerald-500" /> 단답형 추가
-        </button>
-        <button 
-          onClick={() => addQuestion('essay')}
-          className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 text-sm font-medium text-gray-700"
-        >
-          <Plus size={16} className="mr-2 text-amber-500" /> 서술형 추가
-        </button>
-      </div>
-
-      {/* 하단 고정 저장 버튼 */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 flex justify-center shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] z-20">
-        <button 
-          onClick={handleSave}
-          className="flex items-center px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg hover:bg-indigo-700 transition-colors"
-        >
-          {isSaved ? <Check size={20} className="mr-2" /> : <Save size={20} className="mr-2" />}
-          {isSaved ? '저장되었습니다!' : '시험지 배포하기 (저장)'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// --- 교사: 결과 확인 뷰어 ---
-function ResultsViewer({ exam, submissions, setSubmissions }) {
-  const [selectedSub, setSelectedSub] = useState(null);
-
-  if (!exam || !exam.questions.length) {
-    return <div className="text-center p-10 text-gray-500">배포된 시험지가 없습니다.</div>;
-  }
-
-  if (submissions.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-dashed border-gray-300 p-12 text-center">
-        <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
-          <FileText className="text-gray-400" size={32} />
-        </div>
-        <h3 className="text-lg font-medium text-gray-800 mb-1">제출된 답안이 없습니다</h3>
-        <p className="text-gray-500">학생들이 답안을 제출하면 이곳에 표시됩니다.</p>
-      </div>
-    );
-  }
-
-  const handleManualGrade = async (subId, qId, score) => {
-    const sub = submissions.find(s => s.id === subId);
-    if (!sub) return;
-
-    const newDetails = { ...sub.details };
-    newDetails[qId] = { ...newDetails[qId], awardedPoints: Number(score), isManual: true };
-    
-    // 총점 다시 계산
-    const newTotal = Object.values(newDetails).reduce((sum, detail) => sum + (detail.awardedPoints || 0), 0);
-    
     try {
-      const subDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'submissions', subId);
-      await updateDoc(subDocRef, {
-        details: newDetails,
-        totalScore: newTotal
+      const code = generateShareCode();
+      const sharedDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'shared_exams', code);
+      await setDoc(sharedDocRef, {
+        title: examTitle,
+        questions: questions,
+        mode: examMode,
+        createdAt: new Date().toISOString()
       });
-      
-      if (selectedSub && selectedSub.id === subId) {
-        setSelectedSub({ ...sub, details: newDetails, totalScore: newTotal });
+      setGeneratedCode(code);
+      setShareCodeModal(true);
+    } catch (error) {
+      console.error("Cloud save error:", error);
+      showDialog('오류', '공유 코드를 발급하는 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 2. 입력한 코드로 시험지 가져오기
+  const handleLoadFromCloud = async () => {
+    const cleanCode = inputCode.toUpperCase().trim();
+    if (!cleanCode) { setModalError('공유 코드를 입력해 주세요.'); return; }
+
+    try {
+      const sharedDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'shared_exams', cleanCode);
+      const docSnap = await getDoc(sharedDocRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setExamTitle(data.title);
+        setQuestions(data.questions);
+        setExamMode(data.mode || 'grading');
+        setLoadCodeModal(false);
+        setInputCode('');
+        setModalError('');
+        showDialog('불러오기 성공', `[${data.title}] 시험지를 성공적으로 가져왔습니다.`);
+      } else {
+        setModalError('해당 코드로 등록된 시험지를 찾을 수 없습니다.');
       }
     } catch (error) {
-      console.error("Manual grade error:", error);
+      console.error("Cloud load error:", error);
+      setModalError('시험지를 연격 조회하는 중 에러가 발생했습니다.');
     }
+  };
+
+  const copyCodeToClipboard = () => {
+    const tempTextArea = document.createElement('textarea');
+    tempTextArea.value = generatedCode;
+    document.body.appendChild(tempTextArea);
+    tempTextArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(tempTextArea);
+    showDialog('알림', '공유 코드가 클립보드에 성공적으로 복사되었습니다!');
   };
 
   const exportToCSV = () => {
-    if (submissions.length === 0) return;
+    if (submissions.length === 0) { showDialog('알림', '다운로드할 데이터가 없습니다.'); return; }
+    let csvContent = "이름,총점,제출시간,";
+    const maxQuestions = Math.max(...submissions.map(s => s.feedback.length));
+    for (let i = 1; i <= maxQuestions; i++) { csvContent += `${i}번답안,${i}번결과,`; }
+    csvContent += "\n";
 
-    // 1. 헤더 생성
-    const headers = ['이름', '제출일시', '총점', '만점'];
-    exam.questions.forEach((q, idx) => {
-      headers.push(`Q${idx + 1}(${q.points}점)`);
+    submissions.forEach(sub => {
+      const date = new Date(sub.submittedAt).toLocaleString();
+      let row = `${sub.studentName},${sub.score},"${date}",`;
+      sub.feedback.forEach(f => { row += `"${f.studentAnswer}",${f.isCorrect ? 'O' : 'X'},`; });
+      csvContent += row + "\n";
     });
 
-    // 2. 데이터 행 생성
-    const rows = submissions.map(sub => {
-      const row = [
-        sub.studentName,
-        new Date(sub.timestamp).toLocaleString(),
-        sub.totalScore,
-        sub.maxScore
-      ];
-      
-      exam.questions.forEach(q => {
-        const detail = sub.details[q.id];
-        row.push(detail ? detail.awardedPoints : 0);
-      });
-      
-      // 쉼표 등 특수문자 처리를 위해 각 필드를 따옴표로 감싸기
-      return row.map(cell => `"${cell}"`).join(',');
-    });
-
-    // 3. CSV 문자열 결합 (BOM '\uFEFF'을 추가하여 엑셀에서 한글 깨짐 방지)
-    const csvContent = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
-    
-    // 4. 다운로드 트리거
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${exam.title}_채점결과.csv`);
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${examTitle || '결과'}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  const executeReset = async () => {
+    try {
+      for (const sub of submissions) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', `submissions_${selectedRoom}`, sub.id));
+      }
+      const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', selectedRoom);
+      await setDoc(roomRef, { status: 'available' }); 
+      
+      showDialog('초기화 완료', '방이 완벽하게 초기화되었습니다.\n목록으로 돌아갑니다.', 'alert', () => {
+        setDialog({isOpen: false});
+        goBack();
+      });
+    } catch (error) {
+      console.error("Reset error:", error);
+      showDialog('오류', '초기화 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleReset = () => {
+    showDialog('경고', `현재 방(${selectedRoom})의 모든 데이터(비밀번호, 시험지, 학생결과)가 완벽히 삭제되며 방이 '사용 가능' 상태로 반환됩니다.\n\n정말 초기화하시겠습니까?`, 'confirm', 
+      () => { setDialog({isOpen: false}); executeReset(); }
+    );
+  };
+
   return (
-    <div className="flex gap-6 h-[calc(100vh-120px)]">
-      {/* 학생 목록 리스트 */}
-      <div className="w-1/3 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
-        <div className="p-4 border-b bg-gray-50 font-semibold text-gray-700 flex justify-between items-center">
-          <span>제출자 목록 ({submissions.length})</span>
-          <button 
-            onClick={exportToCSV}
-            className="flex items-center text-xs bg-white border border-gray-300 text-gray-600 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
-            title="결과 엑셀 다운로드"
-          >
-            <Download size={14} className="mr-1" /> 다운로드
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <header className="bg-white border-b px-6 py-4 flex flex-col sm:flex-row items-center justify-between sticky top-0 z-10 gap-4">
+        <div className="flex items-center space-x-4">
+          <button onClick={goBack} className="p-2 hover:bg-gray-100 rounded-full text-gray-500">
+            <ArrowLeft size={20} />
+          </button>
+          <div className="flex items-center">
+            <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center mr-3">
+              <User className="text-indigo-600" size={20} />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-800 leading-tight">교사 워크스페이스</h1>
+              <p className="text-xs text-gray-500 font-bold">{selectedRoom?.replace('room_', '')}번 방 사용 중</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex items-center space-x-4">
+          <div className="flex bg-gray-100 p-1 rounded-xl">
+            <button 
+              onClick={() => setActiveTab('create')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'create' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              평가 관리
+            </button>
+            <button 
+              onClick={() => setActiveTab('results')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center ${activeTab === 'results' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              결과 확인
+              {submissions.length > 0 && <span className="ml-2 bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full text-xs">{submissions.length}</span>}
+            </button>
+          </div>
+          <button onClick={handleReset} className="flex items-center text-xs font-bold text-red-500 bg-red-50 px-3 py-2 hover:bg-red-100 rounded-lg transition-colors border border-red-100" title="방 반환 및 초기화">
+            <RotateCcw size={14} className="mr-1" /> 방 초기화
           </button>
         </div>
-        <div className="overflow-y-auto flex-1">
-          {submissions.map((sub, idx) => {
-            const needsReview = Object.keys(sub.details).some(k => 
-              exam.questions.find(q => q.id === k)?.type === 'essay' && !sub.details[k].isManual
-            );
-            
-            return (
-              <button
-                key={sub.id}
-                onClick={() => setSelectedSub(sub)}
-                className={`w-full text-left p-4 border-b hover:bg-gray-50 transition-colors flex justify-between items-center ${selectedSub?.id === sub.id ? 'bg-indigo-50 border-l-4 border-l-indigo-500' : ''}`}
-              >
-                <div>
-                  <div className="font-bold text-gray-800">{sub.studentName}</div>
-                  <div className="text-xs text-gray-500 mt-1">제출 시간: {new Date(sub.timestamp).toLocaleTimeString()}</div>
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="max-w-5xl mx-auto">
+          {activeTab === 'create' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+              
+              {/* 코드 기반 공유 보드 */}
+              <div className="bg-gradient-to-br from-indigo-900 to-indigo-950 p-6 rounded-3xl shadow-xl text-white flex flex-col md:flex-row gap-6 justify-between items-center relative overflow-hidden">
+                <div className="relative z-10 text-center md:text-left">
+                  <h2 className="text-xl font-black flex items-center justify-center md:justify-start">
+                    <Share2 size={22} className="mr-2 text-indigo-400" /> 시험지 무선 공유 스테이션
+                  </h2>
+                  <p className="text-sm text-indigo-200 mt-1">6자리 전용 코드를 이용해 동료 교사들과 간편하게 시험지를 공유하세요.</p>
                 </div>
-                <div className="text-right">
-                  <div className="font-bold text-indigo-600">{sub.totalScore} / {sub.maxScore}점</div>
-                  {needsReview && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full inline-block mt-1">채점 필요</span>}
+                <div className="flex gap-3 w-full md:w-auto relative z-10">
+                  <button 
+                    onClick={() => { setLoadCodeModal(true); setModalError(''); }} 
+                    className="flex-1 md:flex-none px-5 py-3.5 bg-indigo-800 text-indigo-100 font-bold rounded-2xl hover:bg-indigo-700 transition-colors flex items-center justify-center text-sm"
+                  >
+                    <DownloadCloud size={16} className="mr-2" /> 코드 입력하기
+                  </button>
+                  <button 
+                    onClick={handleSaveToCloud} 
+                    className="flex-1 md:flex-none px-5 py-3.5 bg-indigo-500 text-white font-black rounded-2xl hover:bg-indigo-400 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center text-sm"
+                  >
+                    <Share2 size={16} className="mr-2" /> 공유 코드 발급
+                  </button>
                 </div>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* 개별 학생 상세 채점 결과 */}
-      <div className="w-2/3 bg-white rounded-xl shadow-sm border border-gray-200 overflow-y-auto p-6">
-        {selectedSub ? (
-          <div>
-            <div className="border-b pb-4 mb-6 flex justify-between items-end">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-800">{selectedSub.studentName} 학생의 답안</h2>
-                <p className="text-gray-500 mt-1">{exam.title}</p>
+                <div className="absolute right-[-10%] top-[-50%] w-72 h-72 bg-indigo-500 opacity-10 rounded-full blur-3xl"></div>
               </div>
-              <div className="text-right">
-                <div className="text-sm text-gray-500 mb-1">총점</div>
-                <div className="text-3xl font-black text-indigo-600">{selectedSub.totalScore}<span className="text-lg text-gray-400 font-medium">/{selectedSub.maxScore}</span></div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                  <div>
+                    <h2 className="text-lg font-bold flex items-center">
+                      <Layout size={20} className="mr-2 text-indigo-500" /> 평가 모드 설정
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-1">학생들에게 문제 내용을 공개할지 선택하세요.</p>
+                  </div>
+                  <div className="flex bg-gray-100 p-1 rounded-xl w-full sm:w-auto">
+                    <button onClick={() => setExamMode('grading')} className={`flex-1 sm:flex-none flex items-center justify-center px-4 py-3 rounded-lg text-sm font-bold transition-all ${examMode === 'grading' ? 'bg-white shadow-md text-indigo-600' : 'text-gray-400'}`}>
+                      <EyeOff size={16} className="mr-2" /> 답안 전송형
+                    </button>
+                    <button onClick={() => setExamMode('test')} className={`flex-1 sm:flex-none flex items-center justify-center px-4 py-3 rounded-lg text-sm font-bold transition-all ${examMode === 'test' ? 'bg-white shadow-md text-emerald-600' : 'text-gray-400'}`}>
+                      <Eye size={16} className="mr-2" /> 문제 풀이형
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-6 pt-6 border-t border-gray-50">
+                  <label className="block text-sm font-bold text-gray-700 mb-2">평가 제목</label>
+                  <input type="text" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} placeholder="평가 제목을 입력하세요 (예: 5학년 1학기 사회 단원평가)" className="w-full text-lg p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold" />
+                </div>
               </div>
-            </div>
 
-            <div className="space-y-6">
-              {exam.questions.map((q, idx) => {
-                const answerObj = selectedSub.details[q.id] || { awardedPoints: 0, isCorrect: false };
-                const studentAnswer = selectedSub.answers[q.id] || "미응답";
-                const isEssay = q.type === 'essay';
+              <div className="space-y-4">
+                <h2 className="text-lg font-bold flex items-center mt-8">
+                  <FileText size={20} className="mr-2 text-gray-500" /> 문제 구성 ({questions.length}제)
+                </h2>
+                
+                {examMode === 'grading' && (
+                  <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 flex items-start">
+                    <AlertCircle size={18} className="text-indigo-500 mr-2 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-indigo-700">
+                      <strong>답안 전송 모드</strong>가 활성화되어 있습니다. 문제나 보기 내용을 입력할 필요 없이 <strong>정답</strong>과 <strong>배점</strong>만 간편하게 설정하세요!
+                    </p>
+                  </div>
+                )}
 
-                return (
-                  <div key={q.id} className={`p-5 rounded-xl border ${isEssay ? 'border-amber-200 bg-amber-50/30' : answerObj.isCorrect ? 'border-emerald-200 bg-emerald-50/30' : 'border-red-200 bg-red-50/30'}`}>
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-gray-700">Q{idx + 1}.</span>
-                        <span className="text-gray-800">{q.text}</span>
+                {questions.map((q, index) => (
+                  <div key={q.id} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 relative group animate-in slide-in-from-left-4">
+                    <button onClick={() => removeQuestion(q.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 transition-colors"><XCircle size={24} /></button>
+                    <div className="flex gap-4 mb-4 items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <span className="bg-indigo-600 text-white font-bold w-8 h-8 flex items-center justify-center rounded-lg shadow-sm">{index + 1}</span>
+                        <span className={`text-xs font-bold px-2 py-1 rounded-md ${q.type === 'multiple' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                          {q.type === 'multiple' ? '객관식' : '주관식'}
+                        </span>
                       </div>
-                      <span className="text-sm font-semibold text-gray-500 bg-white px-2 py-1 rounded border">배점: {q.points}</span>
-                    </div>
-
-                    <div className="pl-6 space-y-3">
-                      {/* 학생의 답안 표시 */}
-                      <div className="bg-white p-3 rounded-lg border shadow-sm">
-                        <span className="text-xs text-gray-500 block mb-1">학생 제출 답안:</span>
-                        <div className="font-medium text-gray-800">
-                          {q.type === 'multiple_choice' 
-                            ? (studentAnswer && studentAnswer !== "미응답" ? `${Number(studentAnswer) + 1}번` : "미응답")
-                            : studentAnswer}
+                      
+                      {q.type === 'multiple' && (
+                        <div className="flex items-center bg-gray-100 p-1 rounded-lg">
+                          <button onClick={() => changeOptionCount(q.id, 4)} className={`px-3 py-1 text-xs rounded-md font-bold transition-all ${q.options.length === 4 ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-400'}`}>4지 선다</button>
+                          <button onClick={() => changeOptionCount(q.id, 5)} className={`px-3 py-1 text-xs rounded-md font-bold transition-all ${q.options.length === 5 ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-400'}`}>5지 선다</button>
                         </div>
-                      </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {examMode === 'test' && (
+                        <div>
+                          <label className="text-xs font-bold text-gray-400 mb-1 block">문제 내용 (학생 노출용)</label>
+                          <input type="text" value={q.text} onChange={(e) => updateQuestion(q.id, 'text', e.target.value)} placeholder="문제 내용을 입력하세요" className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white" />
+                        </div>
+                      )}
+                      
+                      {examMode === 'test' && q.type === 'multiple' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {q.options.map((opt, i) => (
+                            <div key={i} className="flex items-center">
+                              <span className="text-gray-400 mr-2 font-bold text-sm">{i + 1}.</span>
+                              <input type="text" value={opt} onChange={(e) => updateOption(q.id, i, e.target.value)} placeholder={`보기 ${i + 1} 내용`} className="flex-1 p-2 border border-gray-100 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 outline-none bg-white" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-                      {/* 자동 채점 결과 / 정답 표시 */}
-                      {!isEssay && (
-                        <div className="flex items-center space-x-2 text-sm mt-3">
-                          {answerObj.isCorrect ? (
-                            <><CheckCircle size={18} className="text-emerald-500" /> <span className="text-emerald-700 font-medium">정답입니다. (+{answerObj.awardedPoints}점)</span></>
+                      <div className={`flex gap-4 p-4 rounded-xl mt-4 border ${examMode === 'grading' ? 'bg-gray-50 border-gray-200' : 'bg-indigo-50/50 border-indigo-100'}`}>
+                        <div className="flex-1">
+                          <label className={`block text-xs font-bold mb-1 ${examMode === 'grading' ? 'text-gray-600' : 'text-indigo-700'}`}>정답 설정</label>
+                          {q.type === 'multiple' ? (
+                            <select value={q.correctAnswer} onChange={(e) => updateQuestion(q.id, 'correctAnswer', e.target.value)} className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-white font-medium">
+                              <option value="">정답 선택</option>
+                              {q.options.map((opt, i) => ( 
+                                <option key={i} value={String(i)}>
+                                  {i + 1}번 {examMode === 'test' && opt ? `- ${opt}` : ''}
+                                </option> 
+                              ))}
+                            </select>
                           ) : (
-                            <><AlertCircle size={18} className="text-red-500" /> 
-                              <span className="text-red-700 font-medium">오답입니다. (0점)</span>
-                              <span className="text-gray-500 ml-2">/ 정답: {q.type === 'multiple_choice' ? `${Number(q.answer) + 1}번` : q.answer}</span>
-                            </>
+                            <div>
+                              <input type="text" value={q.correctAnswer} onChange={(e) => updateQuestion(q.id, 'correctAnswer', e.target.value)} placeholder="쉼표(,)로 복수 정답 구분 (예: 세종대왕, 세종)" className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-white font-medium mb-1" />
+                              <p className="text-[10px] text-gray-500 leading-tight">※ 띄어쓰기는 자동 보정됩니다. 여러 정답을 인정하려면 쉼표로 구분하세요.</p>
+                            </div>
                           )}
                         </div>
-                      )}
-
-                      {/* 서술형 수동 채점 영역 */}
-                      {isEssay && (
-                        <div className="mt-4 p-4 bg-amber-100/50 rounded-lg border border-amber-200 flex items-center justify-between">
-                          <span className="text-amber-800 font-medium text-sm flex items-center">
-                            <AlertCircle size={16} className="mr-1" />
-                            교사 수동 채점
-                          </span>
-                          <div className="flex items-center space-x-2">
-                            <input 
-                              type="number" 
-                              min="0" 
-                              max={q.points}
-                              value={answerObj.awardedPoints}
-                              onChange={(e) => handleManualGrade(selectedSub.id, q.id, e.target.value)}
-                              className="w-20 p-2 text-center border-2 border-amber-300 rounded-md focus:outline-none focus:border-amber-500 bg-white font-bold text-amber-700"
-                            />
-                            <span className="text-gray-500">/ {q.points}점</span>
-                          </div>
+                        <div className="w-24">
+                          <label className={`block text-xs font-bold mb-1 ${examMode === 'grading' ? 'text-gray-600' : 'text-indigo-700'}`}>배점</label>
+                          <input type="number" value={q.score} onChange={(e) => updateQuestion(q.id, 'score', Number(e.target.value))} className="w-full p-2 border border-gray-200 rounded-lg text-sm bg-white text-center font-medium" />
                         </div>
-                      )}
+                      </div>
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                <button onClick={() => addQuestion('multiple')} className="flex-1 py-4 border-2 border-dashed border-amber-300 text-amber-600 rounded-2xl font-bold hover:bg-amber-50 transition-colors flex items-center justify-center">
+                  <span className="text-xl mr-2">+</span> 객관식 문항 추가
+                </button>
+                <button onClick={() => addQuestion('text')} className="flex-1 py-4 border-2 border-dashed border-blue-300 text-blue-600 rounded-2xl font-bold hover:bg-blue-50 transition-colors flex items-center justify-center">
+                  <span className="text-xl mr-2">+</span> 주관식 문항 추가
+                </button>
+              </div>
+
+              <div className="mt-8 bg-indigo-900 rounded-3xl p-8 text-white flex flex-col sm:flex-row items-center justify-between shadow-2xl gap-6">
+                <div>
+                  <h3 className="font-extrabold text-xl">평가 배포 준비 완료</h3>
+                  <p className="text-indigo-300 text-sm mt-1">현재 모드: <span className="text-white font-bold">{examMode === 'test' ? '문제 풀이' : '답안 전송'}</span></p>
+                </div>
+                <button onClick={handlePublish} className="w-full sm:w-auto px-10 py-4 bg-white text-indigo-900 font-black rounded-2xl shadow-lg hover:bg-indigo-50 transition-all transform hover:-translate-y-1 flex items-center justify-center">
+                  <Play size={20} className="mr-2" /> 지금 배포하기
+                </button>
+              </div>
             </div>
+          )}
+
+          {activeTab === 'results' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4">
+              <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+                <div>
+                  <h2 className="text-xl font-bold flex items-center text-gray-800">
+                    <Users size={24} className="mr-2 text-indigo-600" /> 제출 현황
+                  </h2>
+                  <p className="text-gray-500 text-sm mt-1">총 {submissions.length}명이 제출함</p>
+                </div>
+                <button onClick={exportToCSV} className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors font-bold text-sm shadow-md">
+                  <Download size={16} className="mr-2" /> 결과 엑셀 다운로드
+                </button>
+              </div>
+
+              {submissions.length === 0 ? (
+                <div className="bg-white p-16 rounded-3xl shadow-sm text-center border border-gray-100">
+                  <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <BookOpen size={32} className="text-gray-300" />
+                  </div>
+                  <p className="text-gray-400 font-medium">아직 제출한 학생이 없습니다.</p>
+                </div>
+              ) : (
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-100 text-xs font-black text-gray-400 uppercase tracking-wider">
+                          <th className="p-4 text-center">순서</th>
+                          <th className="p-4">학생 이름</th>
+                          <th className="p-4">최종 점수</th>
+                          <th className="p-4">제출 시각</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submissions.map((sub, index) => (
+                          <tr key={sub.id} className="border-b border-gray-50 hover:bg-indigo-50/30 transition-colors">
+                            <td className="p-4 text-center text-gray-400 font-medium text-sm">{index + 1}</td>
+                            <td className="p-4 font-bold text-gray-800">{sub.studentName}</td>
+                            <td className="p-4 font-black text-indigo-600">{sub.score}점</td>
+                            <td className="p-4 text-xs text-gray-400">
+                              {new Date(sub.submittedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute:'2-digit' })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* 1. 공유 코드 생성 완료 모달 */}
+      {shareCodeModal && (
+        <div className="fixed inset-0 bg-indigo-900/40 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[40px] shadow-2xl p-10 max-w-sm w-full relative text-center animate-in zoom-in-95 duration-200">
+            <button onClick={() => setShareCodeModal(false)} className="absolute top-6 right-6 text-gray-300 hover:text-gray-500"><XCircle size={24} /></button>
+            <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <Share2 size={28} />
+            </div>
+            <h2 className="text-2xl font-black text-gray-800 mb-2">공유 코드 발급 완료!</h2>
+            <p className="text-sm text-gray-400 font-bold mb-6">아래 코드를 동료 교사에게 전달해 주세요.</p>
+            
+            <div className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100 flex items-center justify-between mb-8">
+              <span className="text-3xl font-black text-indigo-900 tracking-wider font-mono">{generatedCode}</span>
+              <button 
+                onClick={copyCodeToClipboard}
+                className="p-2.5 bg-white text-indigo-600 rounded-xl hover:bg-indigo-100 transition-colors shadow-sm"
+                title="복사하기"
+              >
+                <Copy size={18} />
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShareCodeModal(false)}
+              className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
+            >
+              닫기
+            </button>
           </div>
-        ) : (
-          <div className="h-full flex items-center justify-center text-gray-400">
-            좌측에서 학생을 선택하면 상세 채점 결과를 볼 수 있습니다.
+        </div>
+      )}
+
+      {/* 2. 공유 코드 입력 모달 */}
+      {loadCodeModal && (
+        <div className="fixed inset-0 bg-indigo-900/40 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[40px] shadow-2xl p-10 max-w-sm w-full relative text-center animate-in zoom-in-95 duration-200">
+            <button onClick={() => setLoadCodeModal(false)} className="absolute top-6 right-6 text-gray-300 hover:text-gray-500"><XCircle size={24} /></button>
+            <div className="w-16 h-16 bg-indigo-50 text-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <DownloadCloud size={28} />
+            </div>
+            <h2 className="text-2xl font-black text-gray-800 mb-2">시험지 원격 가져오기</h2>
+            <p className="text-sm text-gray-400 font-bold mb-8">전달받으신 6자리 공유 코드를 입력해 주세요.</p>
+            
+            <div className="relative mb-2">
+              <input
+                type="text"
+                value={inputCode}
+                onChange={(e) => setInputCode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLoadFromCloud()}
+                placeholder="6자리 코드 입력"
+                className="w-full py-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-black text-2xl tracking-widest text-center uppercase text-indigo-900 placeholder:text-gray-300"
+                maxLength={6}
+                autoFocus
+              />
+            </div>
+
+            <div className="h-6 mb-4 flex items-center justify-center">
+              {modalError && <p className="text-red-500 text-xs font-bold animate-in fade-in">{modalError}</p>}
+            </div>
+
+            <button
+              onClick={handleLoadFromCloud}
+              className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
+            >
+              불러오기
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      <CustomDialog dialog={dialog} setDialog={setDialog} />
     </div>
   );
 }
 
 // ==========================================
-// 3. 학생 화면
+// 최상위 App 컴포넌트 (방 목록 및 네비게이션 관리)
 // ==========================================
-function StudentDashboard({ exam, submitExam, goBack }) {
-  const [studentName, setStudentName] = useState('');
-  const [isStarted, setIsStarted] = useState(false);
-  const [answers, setAnswers] = useState({});
-  const [isSubmitted, setIsSubmitted] = useState(false);
+export default function App() {
+  const [appMode, setAppMode] = useState('home'); 
+  const [userRole, setUserRole] = useState('none'); 
+  const [user, setUser] = useState(null);
+  
+  const [rooms, setRooms] = useState({});
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [roomExamData, setRoomExamData] = useState(null);
+  const [submissions, setSubmissions] = useState([]);
 
-  if (!exam || !exam.questions || exam.questions.length === 0) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="text-center bg-white p-10 rounded-2xl shadow-sm border border-gray-200">
-          <AlertCircle size={48} className="mx-auto text-gray-400 mb-4" />
-          <h2 className="text-xl font-bold text-gray-700 mb-2">등록된 시험지가 없습니다</h2>
-          <p className="text-gray-500 mb-6">교사가 시험지를 배포한 후 다시 시도해주세요.</p>
-          <button onClick={goBack} className="px-6 py-2 bg-gray-100 rounded-lg text-gray-700 hover:bg-gray-200 transition-colors">
-            돌아가기
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const [modalState, setModalState] = useState('none'); 
+  const [targetRoom, setTargetRoom] = useState(null);
+  const [roomPassword, setRoomPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [appDialog, setAppDialog] = useState({ isOpen: false });
 
-  // 제출 완료 화면
-  if (isSubmitted) {
-    return (
-      <div className="min-h-screen bg-emerald-50 flex items-center justify-center p-6">
-        <div className="text-center bg-white p-10 rounded-2xl shadow-xl max-w-md w-full border border-emerald-100">
-          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle size={40} className="text-emerald-500" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">제출 완료!</h2>
-          <p className="text-gray-600 mb-8">답안이 성공적으로 제출되었습니다. <br/>자동 채점 결과가 교사에게 전달되었습니다.</p>
-          <button onClick={goBack} className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-colors">
-            초기 화면으로
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const showAppDialog = (title, message) => setAppDialog({ isOpen: true, title, message, type: 'alert', onConfirm: () => setAppDialog({isOpen: false}) });
 
-  // 이름 입력 화면 (시험 전)
-  if (!isStarted) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
-        <button onClick={goBack} className="absolute top-6 left-6 p-2 bg-white shadow-sm rounded-full text-gray-500 hover:text-gray-800">
-          <ArrowLeft size={20} />
-        </button>
-        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
-          <div className="inline-block p-3 bg-emerald-100 text-emerald-600 rounded-2xl mb-6">
-            <FileText size={28} />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">{exam.title}</h1>
-          <p className="text-gray-500 mb-8">시험을 시작하려면 이름을 입력해주세요.</p>
-          
-          <input 
-            type="text" 
-            value={studentName}
-            onChange={(e) => setStudentName(e.target.value)}
-            placeholder="이름 (예: 홍길동)"
-            className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-lg text-center"
-          />
-          
-          <button 
-            disabled={!studentName.trim()}
-            onClick={() => setIsStarted(true)}
-            className="w-full flex items-center justify-center py-4 bg-emerald-600 text-white rounded-xl font-bold text-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            <Play size={20} className="mr-2" /> 시험 시작하기
-          </button>
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) { console.error(e); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-  // 답안 선택 핸들러
-  const handleAnswerChange = (qId, value) => {
-    setAnswers({ ...answers, [qId]: value });
-  };
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'rooms'), (snap) => {
+      const roomData = {};
+      snap.forEach(doc => { roomData[doc.id] = doc.data(); });
+      setRooms(roomData);
+    });
+    return () => unsub();
+  }, [user]);
 
-  // 제출 및 자동 채점 로직
-  const handleSubmit = () => {
-    let totalScore = 0;
-    let maxScore = 0;
-    const details = {};
-
-    exam.questions.forEach(q => {
-      maxScore += q.points;
-      const studentAns = answers[q.id] || "";
-      let isCorrect = false;
-      let awardedPoints = 0;
-
-      if (q.type === 'multiple_choice') {
-        isCorrect = studentAns === q.answer;
-        awardedPoints = isCorrect ? q.points : 0;
-      } else if (q.type === 'short_answer') {
-        // 공백 제거 및 소문자 변환하여 비교 (간단한 자동 채점 로직)
-        isCorrect = studentAns.trim().toLowerCase() === q.answer.trim().toLowerCase();
-        awardedPoints = isCorrect ? q.points : 0;
-      } else if (q.type === 'essay') {
-        // 서술형은 무조건 0점 처리 (교사가 나중에 수동 채점)
-        isCorrect = false;
-        awardedPoints = 0;
+  useEffect(() => {
+    if (!user || !selectedRoom || appMode !== 'dashboard') return;
+    
+    const unsubExam = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', selectedRoom), (docSnap) => {
+      if (docSnap.exists() && docSnap.data().status === 'in_use') {
+        setRoomExamData(docSnap.data());
+      } else {
+        setRoomExamData(null); 
       }
-
-      totalScore += awardedPoints;
-      details[q.id] = {
-        studentAnswer: studentAns,
-        isCorrect,
-        awardedPoints,
-        isManual: false // 서술형 채점 여부 추적용
-      };
+    });
+    
+    const unsubSub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', `submissions_${selectedRoom}`), (snapshot) => {
+      const subs = [];
+      snapshot.forEach(d => subs.push({ id: d.id, ...d.data() }));
+      subs.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+      setSubmissions(subs);
     });
 
-    const submissionData = {
-      studentName,
-      timestamp: Date.now(),
-      answers,
-      details,
-      totalScore,
-      maxScore
-    };
+    return () => { unsubExam(); unsubSub(); };
+  }, [user, selectedRoom, appMode]);
 
-    submitExam(submissionData);
-    setIsSubmitted(true);
+  const handleRoomClick = (roomId, roomData) => {
+    const status = roomData?.status || 'available';
+
+    if (userRole === 'teacher') {
+      setTargetRoom({ id: roomId, data: roomData });
+      if (status === 'in_use') {
+        setModalState('enter_room_pw'); 
+      } else {
+        setModalState('teacher_set_pw'); 
+      }
+    } else if (userRole === 'student') {
+      if (status === 'in_use') {
+        setTargetRoom({ id: roomId, data: roomData });
+        setModalState('enter_room_pw'); 
+      } else {
+        showAppDialog('알림', '현재 비어있는 방입니다.\n선생님이 개설한 방을 선택해주세요.');
+      }
+    }
   };
 
-  // 시험 보는 화면
+  const handleSetPassword = async () => {
+    if (!roomPassword.trim()) { setAuthError('비밀번호를 입력해주세요.'); return; }
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', targetRoom.id), {
+        status: 'in_use',
+        password: roomPassword,
+        title: '',
+        questions: [],
+        mode: 'grading'
+      });
+      setSelectedRoom(targetRoom.id);
+      setAppMode('dashboard');
+      closeModal();
+    } catch (e) {
+      console.error(e);
+      setAuthError('오류가 발생했습니다.');
+    }
+  };
+
+  const handleEnterPassword = () => {
+    if (roomPassword === targetRoom.data.password) {
+      setSelectedRoom(targetRoom.id);
+      setAppMode('dashboard');
+      closeModal();
+    } else {
+      setAuthError('비밀번호가 일치하지 않습니다.');
+    }
+  };
+
+  const closeModal = () => {
+    setModalState('none');
+    setRoomPassword('');
+    setAuthError('');
+    setTargetRoom(null);
+  };
+
+  if (appMode === 'home') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+        <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-indigo-100 rounded-full blur-[120px] opacity-50"></div>
+        <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-100 rounded-full blur-[120px] opacity-50"></div>
+        
+        <div className="max-w-md w-full bg-white/80 backdrop-blur-xl rounded-[40px] shadow-2xl p-10 text-center z-10 border border-white">
+          <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-lg transform rotate-3">
+            <ClipboardCheck size={40} />
+          </div>
+          <h1 className="text-3xl font-black text-gray-900 mb-2 tracking-tight">스마트 평가 시스템</h1>
+          <p className="text-gray-500 mb-10 font-bold">진행할 역할을 선택해 주세요</p>
+          
+          <div className="space-y-4">
+            <button onClick={() => { setUserRole('teacher'); setAppMode('room_select'); }} className="w-full flex items-center p-5 bg-white border-2 border-gray-50 rounded-3xl hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 transition-all group">
+              <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mr-4 group-hover:scale-110 transition-transform"><User size={28} /></div>
+              <div className="text-left flex-1">
+                <h3 className="font-black text-gray-800">교사 워크스페이스</h3>
+                <p className="text-xs text-gray-400 font-bold">평가 출제 및 방 관리</p>
+              </div>
+              <ChevronRight className="text-gray-300 group-hover:text-indigo-500" />
+            </button>
+
+            <button onClick={() => { setUserRole('student'); setAppMode('room_select'); }} className="w-full flex items-center p-5 bg-white border-2 border-gray-50 rounded-3xl hover:border-emerald-500 hover:shadow-xl hover:shadow-emerald-100 transition-all group">
+              <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 mr-4 group-hover:scale-110 transition-transform"><Users size={28} /></div>
+              <div className="text-left flex-1">
+                <h3 className="font-black text-gray-800">학생 평가 참여</h3>
+                <p className="text-xs text-gray-400 font-bold">선생님 방 진입 및 제출</p>
+              </div>
+              <ChevronRight className="text-gray-300 group-hover:text-emerald-500" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (appMode === 'dashboard') {
+    if (userRole === 'teacher') {
+      return <TeacherDashboard exam={roomExamData} submissions={submissions} selectedRoom={selectedRoom} goBack={() => setAppMode('room_select')} />;
+    } else {
+      return <StudentScreen exam={roomExamData} user={user} selectedRoom={selectedRoom} goBack={() => setAppMode('room_select')} />;
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      <header className="bg-white shadow-sm px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center text-emerald-600 font-bold">
-          <GraduationCap size={24} className="mr-2" /> 학생 모드
-        </div>
-        <div className="font-bold text-gray-800 text-lg">
-          {exam.title}
-        </div>
-        <div className="text-gray-500 font-medium">
-          응시자: <span className="text-gray-800">{studentName}</span>
+    <div className="min-h-screen bg-gray-50 p-6 flex flex-col">
+      <header className="max-w-6xl mx-auto w-full mb-8 flex items-center justify-between">
+        <div>
+          <button onClick={() => setAppMode('home')} className="flex items-center text-gray-500 hover:text-indigo-600 font-bold mb-4 bg-white px-4 py-2 rounded-xl shadow-sm transition-colors">
+            <Home size={18} className="mr-2" /> 메인 홈으로
+          </button>
+          
+          <h1 className="text-3xl font-black text-gray-800 flex items-center">
+            {userRole === 'teacher' ? <User className="mr-3 text-indigo-600" size={32} /> : <Users className="mr-3 text-emerald-600" size={32} />}
+            {userRole === 'teacher' ? '워크스페이스 선택' : '접속할 방 선택'}
+          </h1>
+          <p className="text-gray-500 mt-2 font-medium">
+            {userRole === 'teacher' 
+              ? '새로운 시험지를 생성하거나 개설한 시험지에 다시 진입하세요.' 
+              : '선생님이 안내해주신 번호의 방 비밀번호를 입력하고 입장하세요.'}
+          </p>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6 pb-32">
-        <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-sm p-8 border border-gray-100">
-          <div className="text-center border-b pb-6 mb-6">
-            <h2 className="text-2xl font-black text-gray-800 tracking-wider">OMR 및 서답형 답안지</h2>
-            <p className="text-gray-500 mt-2">종이 시험지의 문제 번호에 맞춰 답안을 작성해주세요.</p>
-          </div>
-          
-          <div className="space-y-1">
-            {exam.questions.map((q, idx) => (
-              <div key={q.id} className="flex flex-col md:flex-row md:items-center py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors px-3 rounded-lg">
-                <div className="w-24 font-bold text-lg text-gray-800 mb-2 md:mb-0 flex items-center">
-                  <span className="text-emerald-600 mr-1">{idx + 1}</span>번
-                  <span className="text-[10px] font-normal text-gray-400 ml-2 border px-1.5 py-0.5 rounded">{q.points}점</span>
-                </div>
+      {/* ⭐️ 30개로 늘어난 방 목록 UI 렌더링 영역 */}
+      <main className="max-w-6xl mx-auto w-full grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+        {[...Array(30)].map((_, i) => {
+          const roomId = `room_${i + 1}`;
+          const roomData = rooms[roomId] || { status: 'available' };
+          const isInUse = roomData.status === 'in_use';
 
-                <div className="flex-1">
-                  {/* 객관식 입력 (OMR 스타일) */}
-                  {q.type === 'multiple_choice' && (
-                    <div className="flex flex-wrap gap-2">
-                      {q.options.map((_, optIdx) => (
-                        <label 
-                          key={optIdx} 
-                          className={`relative w-10 h-10 flex items-center justify-center rounded-full border-2 cursor-pointer transition-all duration-200 ${answers[q.id] === String(optIdx) ? 'border-emerald-500 bg-emerald-500 text-white font-bold shadow-md transform scale-105' : 'border-gray-300 bg-white text-gray-600 hover:border-emerald-400 hover:bg-emerald-50'}`}
-                        >
-                          <input 
-                            type="radio" 
-                            name={`q-${q.id}`} 
-                            value={String(optIdx)}
-                            checked={answers[q.id] === String(optIdx)}
-                            onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                            className="absolute opacity-0 w-0 h-0"
-                          />
-                          <span className="text-base">{optIdx + 1}</span>
-                        </label>
-                      ))}
-                    </div>
+          return (
+            <button 
+              key={roomId}
+              onClick={() => handleRoomClick(roomId, roomData)}
+              className={`relative flex flex-col items-center justify-center p-6 rounded-3xl border-2 transition-all group overflow-hidden ${
+                isInUse 
+                  ? 'bg-white border-indigo-100 hover:border-indigo-400 shadow-md hover:shadow-xl' 
+                  : 'bg-transparent border-dashed border-gray-300 hover:bg-gray-100'
+              }`}
+            >
+              {isInUse ? (
+                <>
+                  <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <Lock size={24} />
+                  </div>
+                  <h3 className="font-black text-xl text-gray-800">{i + 1}번 방</h3>
+                  <div className="mt-2 bg-indigo-100 text-indigo-700 text-[10px] font-extrabold px-3 py-1 rounded-full flex items-center uppercase tracking-wider">
+                    <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full mr-1.5 animate-pulse"></span>
+                    사용 중
+                  </div>
+                  {roomData.title && (
+                    <p className="text-xs text-gray-500 mt-3 font-medium text-center line-clamp-1 w-full px-2">{roomData.title}</p>
                   )}
-
-                  {/* 단답형 입력 */}
-                  {q.type === 'short_answer' && (
-                    <input 
-                      type="text" 
-                      value={answers[q.id] || ''}
-                      onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                      placeholder="정답 입력"
-                      className="w-full max-w-md p-2.5 text-base border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:bg-emerald-50 focus:ring-0 outline-none transition-colors"
-                    />
-                  )}
-
-                  {/* 서술형 입력 */}
-                  {q.type === 'essay' && (
-                    <textarea 
-                      value={answers[q.id] || ''}
-                      onChange={(e) => handleAnswerChange(q.id, e.target.value)}
-                      placeholder="서술형 답안을 입력하세요"
-                      className="w-full p-3 text-sm border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:bg-emerald-50 focus:ring-0 outline-none transition-colors min-h-[80px] resize-y"
-                    />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-14 h-14 bg-white/50 text-gray-400 rounded-2xl flex items-center justify-center mb-4 group-hover:text-emerald-500 group-hover:bg-emerald-50 transition-colors">
+                    <Unlock size={24} />
+                  </div>
+                  <h3 className="font-black text-xl text-gray-400 group-hover:text-gray-800 transition-colors">{i + 1}번 방</h3>
+                  <div className="mt-2 bg-gray-200 text-gray-500 text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider">
+                    비어있음
+                  </div>
+                </>
+              )}
+            </button>
+          );
+        })}
       </main>
 
-      {/* 하단 고정 제출 버튼 */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t p-4 flex justify-center shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.1)] z-20">
-        <div className="max-w-3xl w-full flex justify-between items-center px-4">
-          <div className="text-gray-500 font-medium">
-            응답 완료: {Object.keys(answers).length} / {exam.questions.length} 문항
+      {/* 방 진입/비밀번호 모달 */}
+      {modalState !== 'none' && (
+        <div className="fixed inset-0 bg-indigo-900/40 backdrop-blur-md flex items-center justify-center z-50 p-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[40px] shadow-2xl p-10 max-w-sm w-full relative animate-in zoom-in-95 duration-200">
+            <button onClick={closeModal} className="absolute top-6 right-6 text-gray-300 hover:text-gray-500"><XCircle size={24} /></button>
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 ${modalState === 'teacher_set_pw' ? 'bg-emerald-50 text-emerald-500' : 'bg-indigo-50 text-indigo-500'}`}>
+              {modalState === 'teacher_set_pw' ? <Unlock size={28} /> : <Lock size={28} />}
+            </div>
+            
+            <h2 className="text-2xl font-black text-center text-gray-800 mb-2">
+              {targetRoom?.id.replace('room_', '')}번 방 {modalState === 'teacher_set_pw' ? '개설하기' : '진입하기'}
+            </h2>
+            <p className="text-center text-sm text-gray-400 font-bold mb-8 font-medium">
+              {userRole === 'student' 
+                ? '선생님이 안내해주신 방 비밀번호를 입력해주세요.' 
+                : modalState === 'teacher_set_pw' 
+                  ? '새로운 워크스페이스 전용 비밀번호를 설정하세요.' 
+                  : '이 방을 개설할 때 설정한 비밀번호를 입력하세요.'}
+            </p>
+            
+            <div className="relative mb-2">
+              <Key size={20} className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-300" />
+              <input
+                type="password"
+                value={roomPassword}
+                onChange={(e) => setRoomPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (modalState === 'teacher_set_pw' ? handleSetPassword() : handleEnterPassword())}
+                placeholder="비밀번호"
+                className="w-full pl-12 pr-4 py-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold"
+                autoFocus
+              />
+            </div>
+            
+            <div className="h-6 mb-4 flex items-center justify-center">
+              {authError && <p className="text-red-500 text-sm font-bold animate-in fade-in">{authError}</p>}
+            </div>
+
+            <button
+              onClick={modalState === 'teacher_set_pw' ? handleSetPassword : handleEnterPassword}
+              className={`w-full py-4 text-white font-black rounded-2xl shadow-lg transition-all ${
+                modalState === 'teacher_set_pw' ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'
+              }`}
+            >
+              {modalState === 'teacher_set_pw' ? '비밀번호 설정 및 개설' : '방 진입'}
+            </button>
           </div>
-          <button 
-            onClick={handleSubmit}
-            className="px-10 py-3 bg-emerald-600 text-white rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-700 hover:shadow-xl transition-all flex items-center"
-          >
-            답안 최종 제출 <ChevronRight size={20} className="ml-1" />
-          </button>
         </div>
-      </div>
+      )}
+      
+      <CustomDialog dialog={appDialog} setDialog={setAppDialog} />
     </div>
   );
 }
